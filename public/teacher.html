@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8">
-  <title>Enseignant - Partage de Documents</title>
+  <meta charset="UTF-8" />
+  <title>Enseignant - Prévisualisation et Partage</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter&display=swap">
   <style>
     * { box-sizing: border-box; }
@@ -15,10 +15,11 @@
     header {
       background: #1e3a8a;
       color: white;
-      padding: 1rem;
+      padding: 1rem 2rem;
       text-align: center;
       font-size: 1.5rem;
       font-weight: bold;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
     }
     main {
       display: flex;
@@ -27,15 +28,17 @@
     #sidebar {
       width: 280px;
       background: #ffffff;
-      padding: 1.5rem;
+      padding: 1.5rem 1rem;
       border-right: 1px solid #ddd;
       overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
     }
     .controls {
       display: flex;
       flex-direction: column;
       gap: 10px;
-      margin-bottom: 1.5rem;
     }
     .controls button {
       background: #2563eb;
@@ -43,10 +46,39 @@
       padding: 10px 15px;
       color: white;
       border-radius: 6px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
       cursor: pointer;
+      transition: background 0.3s;
+    }
+    .controls button:hover {
+      background: #1d4ed8;
+    }
+    .pageBox {
+      padding: 10px;
+      margin-bottom: 6px;
+      border: 1px solid #d1d5db;
+      border-radius: 5px;
+      background: #f9fafb;
+      cursor: pointer;
+      transition: background 0.3s, transform 0.2s;
+    }
+    .pageBox:hover {
+      background: #e0f2fe;
+      transform: scale(1.01);
+    }
+    .pageBox.selected {
+      background: #dbeafe;
+      border: 2px solid #3b82f6;
+    }
+    .pageBox.shared {
+      background: #fef08a !important;
     }
     #previewArea {
       flex: 1;
+      background: #fff;
       padding: 2rem;
       overflow-y: auto;
       display: flex;
@@ -56,21 +88,29 @@
     canvas {
       border: 1px solid #ccc;
       border-radius: 6px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
       max-width: 100%;
+      height: auto;
     }
+    .icon-share::before { content: '🔗'; }
+    .icon-multi::before { content: '📄'; }
+    .icon-image::before { content: '🖼️'; }
+    .icon-reset::before { content: '♻️'; }
   </style>
 </head>
 <body>
-  <header>Interface Enseignant</header>
+  <header>📚 Interface Enseignant – Partage de Document</header>
   <main>
     <div id="sidebar">
-      <input type="file" id="pdfInput" accept="application/pdf" style="display:none;">
+      <input type="file" id="fileInput" accept="application/pdf" />
       <div class="controls">
-        <button id="uploadPdf">📄 Charger un PDF</button>
-        <button id="sharePage">🔗 Partager la page</button>
-        <button id="reset">♻️ Réinitialiser</button>
+        <button onclick="shareCurrentPage()"><span class="icon-share"></span> Partager cette page</button>
+        <button onclick="promptAndShareSelectedPages()"><span class="icon-multi"></span> Partager plusieurs pages</button>
+        <button onclick="document.getElementById('imageInput').click();"><span class="icon-image"></span> Partager une image</button>
+        <button onclick="resetAll()"><span class="icon-reset"></span> Réinitialiser</button>
+        <input type="file" id="imageInput" accept="image/*" style="display:none;">
       </div>
-      <div id="pageThumbnails"></div>
+      <div id="pageList"></div>
     </div>
     <div id="previewArea">
       <canvas id="pdfCanvas"></canvas>
@@ -83,72 +123,140 @@
     const socket = io();
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs/pdf.worker.min.js';
 
+    const fileInput = document.getElementById('fileInput');
+    const pageList = document.getElementById('pageList');
+    const canvas = document.getElementById('pdfCanvas');
+    const ctx = canvas.getContext('2d');
+    const imageInput = document.getElementById('imageInput');
+
     let pdfDoc = null;
-    let currentPage = 1;
+    let currentPageNum = 1;
+    let selectedPages = [];
+    let sharedPages = new Set();
 
-    // Gestion des événements
-    document.getElementById('uploadPdf').addEventListener('click', () => {
-      document.getElementById('pdfInput').click();
-    });
-
-    document.getElementById('pdfInput').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files[0];
       if (!file) return;
 
-      const arrayBuffer = await file.arrayBuffer();
-      pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
-      renderPage(currentPage);
-      createThumbnails();
+      const reader = new FileReader();
+      reader.onload = async function () {
+        const typedarray = new Uint8Array(this.result);
+        pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
+        renderPage(currentPageNum);
+        buildPageList();
+      };
+      reader.readAsArrayBuffer(file);
     });
 
-    document.getElementById('sharePage').addEventListener('click', () => {
-      if (!pdfDoc) return;
-      const canvas = document.getElementById('pdfCanvas');
-      const imageData = canvas.toDataURL();
-      const html = `<img src="${imageData}" style="max-width:100%">`;
-      socket.emit('shareContent', html);
-    });
+    function renderPage(num) {
+      pdfDoc.getPage(num).then(page => {
+        const viewport = page.getViewport({ scale: 1.5 });
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
 
-    document.getElementById('reset').addEventListener('click', () => {
-      socket.emit('resetTablets');
-    });
-
-    // Fonctions utilitaires
-    async function renderPage(num) {
-      const page = await pdfDoc.getPage(num);
-      const viewport = page.getViewport({ scale: 1.5 });
-      const canvas = document.getElementById('pdfCanvas');
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-      
-      await page.render({
-        canvasContext: canvas.getContext('2d'),
-        viewport: viewport
-      }).promise;
+        const renderContext = {
+          canvasContext: ctx,
+          viewport: viewport
+        };
+        page.render(renderContext);
+      });
     }
 
-    function createThumbnails() {
-      const container = document.getElementById('pageThumbnails');
-      container.innerHTML = '';
-      
+    function buildPageList() {
+      pageList.innerHTML = '';
       for (let i = 1; i <= pdfDoc.numPages; i++) {
-        const thumb = document.createElement('div');
-        thumb.textContent = `Page ${i}`;
-        thumb.style.padding = '8px';
-        thumb.style.margin = '4px 0';
-        thumb.style.cursor = 'pointer';
-        thumb.style.borderRadius = '4px';
-        thumb.style.backgroundColor = i === currentPage ? '#dbeafe' : '#f3f4f6';
-        
-        thumb.addEventListener('click', () => {
-          currentPage = i;
+        const div = document.createElement('div');
+        div.className = 'pageBox';
+        div.textContent = `Page ${i}`;
+        div.dataset.pageNum = i;
+
+        div.onclick = () => {
+          currentPageNum = i;
           renderPage(i);
-          createThumbnails();
-        });
-        
-        container.appendChild(thumb);
+          updatePageListStyles();
+        };
+
+        pageList.appendChild(div);
       }
     }
+
+    function updatePageListStyles() {
+      const boxes = document.querySelectorAll('.pageBox');
+      boxes.forEach(box => {
+        const num = parseInt(box.dataset.pageNum);
+        box.classList.remove('selected', 'shared');
+        if (num === currentPageNum) box.classList.add('selected');
+        if (sharedPages.has(num)) box.classList.add('shared');
+      });
+    }
+
+    function shareCurrentPage() {
+      if (!pdfDoc) return;
+
+      const canvasClone = canvas.cloneNode();
+      canvasClone.getContext('2d').drawImage(canvas, 0, 0);
+      const html = `<img src="${canvasClone.toDataURL()}" style="max-width:100%" />`;
+      socket.emit('sharePage', html);
+
+      sharedPages = new Set([currentPageNum]);
+      updatePageListStyles();
+    }
+
+    function promptAndShareSelectedPages() {
+      const input = prompt("📄 Entrez les numéros de pages à partager, séparés par des virgules :\nEx: 1,3,5");
+      if (!input) return;
+
+      const pageNums = input.split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p) && p >= 1 && p <= pdfDoc.numPages);
+      if (pageNums.length === 0) return;
+
+      shareSelectedPages(pageNums);
+    }
+
+    async function shareSelectedPages(pageNums) {
+      const container = document.createElement('div');
+      sharedPages = new Set(); // reset shared
+
+      for (const num of pageNums) {
+        const page = await pdfDoc.getPage(num);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = viewport.width;
+        tempCanvas.height = viewport.height;
+        await page.render({ canvasContext: tempCanvas.getContext('2d'), viewport }).promise;
+        const img = document.createElement('img');
+        img.src = tempCanvas.toDataURL();
+        img.style = "max-width:100%; margin-bottom:10px;";
+        container.appendChild(img);
+        sharedPages.add(num);
+      }
+
+      socket.emit('sharePage', container.innerHTML);
+      updatePageListStyles();
+    }
+
+    imageInput.addEventListener('change', () => {
+      const file = imageInput.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function () {
+        const html = `<img src="${reader.result}" style="max-width:100%;" />`;
+        socket.emit('sharePage', html);
+        sharedPages.clear(); // pas une page PDF, donc on désélectionne tout
+        updatePageListStyles();
+      };
+      reader.readAsDataURL(file);
+    });
+
+    function resetAll() {
+      socket.emit('resetTablets');
+      sharedPages.clear();
+      updatePageListStyles();
+    }
+
+    socket.on('clearTablet', () => {
+      alert('🧹 Réinitialisation des tablettes effectuée.');
+    });
   </script>
 </body>
 </html>
