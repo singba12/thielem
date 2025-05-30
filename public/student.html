@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Élève</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: sans-serif; 
+      background: #121212;
+      color: white;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: #2c3e50;
+      padding: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #content {
+      flex: 1;
+      padding: 1rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: black;
+      opacity: 0.3;
+      pointer-events: none;
+    }
+    img {
+      max-width: 100%;
+      margin-bottom: 1rem;
+      background: white;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Tablette Élève</h1>
+    <div>
+      <input type="range" id="opacityControl" min="0" max="100" value="30">
+      <button onclick="window.location.reload()">Actualiser</button>
+    </div>
+  </header>
+
+  <div id="overlay"></div>
+  <div id="content">
+    <p>En attente de contenu...</p>
+  </div>
+
+  <script>
+    const socket = io();
+    const contentDiv = document.getElementById('content');
+    const overlay = document.getElementById('overlay');
+    const opacityControl = document.getElementById('opacityControl');
+
+    // Gestion des mises à jour de contenu
+    socket.on('updateContent', (html) => {
+      contentDiv.innerHTML = html;
+    });
+
+    // Réinitialisation
+    socket.on('clearTablets', () => {
+      contentDiv.innerHTML = '<p>En attente de contenu...</p>';
+    });
+
+    // Contrôle de l'opacité
+    opacityControl.addEventListener('input', (e) => {
+      overlay.style.opacity = e.target.value / 100;
+    });
+  </script>
+</body>
+</html>

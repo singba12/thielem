@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Enseignant - Partage de Documents</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Inter', sans-serif;
+      background-color: #f1f3f8;
+      color: #333;
+    }
+    header {
+      background: #1e3a8a;
+      color: white;
+      padding: 1rem;
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: bold;
+    }
+    main {
+      display: flex;
+      height: calc(100vh - 70px);
+    }
+    #sidebar {
+      width: 280px;
+      background: #ffffff;
+      padding: 1.5rem;
+      border-right: 1px solid #ddd;
+      overflow-y: auto;
+    }
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 1.5rem;
+    }
+    .controls button {
+      background: #2563eb;
+      border: none;
+      padding: 10px 15px;
+      color: white;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    #previewArea {
+      flex: 1;
+      padding: 2rem;
+      overflow-y: auto;
+      display: flex;
+      justify-content: center;
+      align-items: start;
+    }
+    canvas {
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      max-width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <header>Interface Enseignant</header>
+  <main>
+    <div id="sidebar">
+      <input type="file" id="pdfInput" accept="application/pdf" style="display:none;">
+      <div class="controls">
+        <button id="uploadPdf">📄 Charger un PDF</button>
+        <button id="sharePage">🔗 Partager la page</button>
+        <button id="reset">♻️ Réinitialiser</button>
+      </div>
+      <div id="pageThumbnails"></div>
+    </div>
+    <div id="previewArea">
+      <canvas id="pdfCanvas"></canvas>
+    </div>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="pdfjs/pdf.min.js"></script>
+  <script>
+    const socket = io();
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs/pdf.worker.min.js';
+
+    let pdfDoc = null;
+    let currentPage = 1;
+
+    // Gestion des événements
+    document.getElementById('uploadPdf').addEventListener('click', () => {
+      document.getElementById('pdfInput').click();
+    });
+
+    document.getElementById('pdfInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const arrayBuffer = await file.arrayBuffer();
+      pdfDoc = await pdfjsLib.getDocument(arrayBuffer).promise;
+      renderPage(currentPage);
+      createThumbnails();
+    });
+
+    document.getElementById('sharePage').addEventListener('click', () => {
+      if (!pdfDoc) return;
+      const canvas = document.getElementById('pdfCanvas');
+      const imageData = canvas.toDataURL();
+      const html = `<img src="${imageData}" style="max-width:100%">`;
+      socket.emit('shareContent', html);
+    });
+
+    document.getElementById('reset').addEventListener('click', () => {
+      socket.emit('resetTablets');
+    });
+
+    // Fonctions utilitaires
+    async function renderPage(num) {
+      const page = await pdfDoc.getPage(num);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.getElementById('pdfCanvas');
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      
+      await page.render({
+        canvasContext: canvas.getContext('2d'),
+        viewport: viewport
+      }).promise;
+    }
+
+    function createThumbnails() {
+      const container = document.getElementById('pageThumbnails');
+      container.innerHTML = '';
+      
+      for (let i = 1; i <= pdfDoc.numPages; i++) {
+        const thumb = document.createElement('div');
+        thumb.textContent = `Page ${i}`;
+        thumb.style.padding = '8px';
+        thumb.style.margin = '4px 0';
+        thumb.style.cursor = 'pointer';
+        thumb.style.borderRadius = '4px';
+        thumb.style.backgroundColor = i === currentPage ? '#dbeafe' : '#f3f4f6';
+        
+        thumb.addEventListener('click', () => {
+          currentPage = i;
+          renderPage(i);
+          createThumbnails();
+        });
+        
+        container.appendChild(thumb);
+      }
+    }
+  </script>
+</body>
+</html>
